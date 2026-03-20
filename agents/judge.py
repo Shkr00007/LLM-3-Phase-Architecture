@@ -31,8 +31,9 @@ class JudgeAgent(BaseAgent):
                     "role": "system",
                     "content": (
                         "You are the Judge Agent performing LLM-as-a-Judge verification. "
-                        "Approve only if the answer is supported by the provided chunks, triplets, or summary. "
-                        "Flag missing support, contradictions, or speculative claims, and provide targeted retry guidance."
+                        "Approve grounded answers only if they are supported by the provided chunks, triplets, or summary. "
+                        "If the draft explicitly indicates grounded=false and no context was available, you may still approve a helpful, coherent answer, "
+                        "but reduce the score and avoid claiming it was memory-grounded. Flag contradictions, unsupported certainty, or speculative claims, and provide targeted retry guidance."
                     ),
                 },
                 {
