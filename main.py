@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,10 @@ class RunStatusResponse(BaseModel):
     events: list[RunEvent]
 
 
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
+LOGGER = logging.getLogger(__name__)
+
+
 class Conductor:
     def __init__(self) -> None:
         load_dotenv()
@@ -74,6 +79,7 @@ class Conductor:
         db_path = os.getenv("MEMORY_DB_PATH", "database/memory.db")
         top_k = int(os.getenv("REPOSITORY_TOP_K", "5"))
         window_size = int(os.getenv("DIPLOMAT_WINDOW_SIZE", "6"))
+        chroma_path = os.getenv("CHROMA_PATH", "database/chroma")
         self.max_retries = int(os.getenv("JUDGE_MAX_RETRIES", "2"))
 
         self.db = DatabaseManager(db_path)
@@ -85,6 +91,7 @@ class Conductor:
             keep_alive=keep_alive,
             headers=headers,
             top_k=top_k,
+            chroma_path=chroma_path,
         )
         self.diplomat = DiplomatAgent(
             host=host,
@@ -133,6 +140,7 @@ class Conductor:
         )
 
     def check_connection(self) -> dict[str, Any]:
+        LOGGER.info("Checking remote Ollama connectivity")
         inventory = self.repository.ping()
         return self.envelope(
             "repository",
@@ -159,6 +167,7 @@ class Conductor:
             detail="Conductor accepted a new query.",
             payload={"session_id": session_id, "query": query},
         )
+        LOGGER.info("Starting run_id=%s session_id=%s query=%r", run_id, session_id, query)
         self.repository.remember_turn(session_id, "user", query)
 
         feedback: str | None = None
@@ -234,6 +243,20 @@ class Conductor:
                 final_answer = diplomat_packet["draft"]["answer"]
                 if judge_packet["approved"]:
                     self.repository.remember_turn(session_id, "assistant", final_answer)
+                    memory_result = self.repository.store_interaction_memory(
+                        session_id=session_id,
+                        query=query,
+                        answer=final_answer,
+                        run_id=run_id,
+                    )
+                    self.log_event(
+                        run_id=run_id,
+                        agent_name="repository",
+                        stage="memory_writeback",
+                        status="completed",
+                        detail="Stored approved query and answer in semantic memory.",
+                        payload=memory_result,
+                    )
                     self.db.update_workflow_run(
                         run_id,
                         status="completed",
@@ -248,9 +271,10 @@ class Conductor:
                         agent_name="conductor",
                         stage="finalize",
                         status="completed",
-                        detail="Query approved and response stored.",
-                        payload={"answer_preview": final_answer[:500]},
+                        detail="Query approved, response stored, and memory write-back completed.",
+                        payload={"answer_preview": final_answer[:500], "memory": memory_result},
                     )
+                    LOGGER.info("Completed run_id=%s with approved answer and memory write-back", run_id)
                     return audited
                 feedback = judge_packet["retry_feedback"]
                 self.log_event(

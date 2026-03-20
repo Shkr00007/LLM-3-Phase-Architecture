@@ -39,3 +39,6 @@ Each query creates a workflow run record plus agent-level events in `database/me
 
 ## Persistence
 All durable memory is stored in `database/memory.db`, including chunk embeddings, conversation turns, graph triplets, mid-term summaries, workflow runs, and monitoring events.
+
+## Memory augmentation
+Semantic memory is persisted in ChromaDB at `database/chroma` by default. After every judge-approved response, the system writes back the user query and final answer embeddings so later queries can retrieve them semantically. Triplets extracted from ingested documents and approved interactions are stored in SQLite and returned alongside vector matches.
