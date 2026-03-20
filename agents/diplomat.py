@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from agents.base import BaseAgent
 from agents.repository import RetrievalBundle, RepositoryAgent
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ReActStep(BaseModel):
@@ -16,6 +20,7 @@ class ReActStep(BaseModel):
 
 class DiplomatDraft(BaseModel):
     answer: str
+    grounded: bool = True
     confidence: float = Field(ge=0, le=1)
     citations: list[str] = Field(default_factory=list)
     react_trace: list[ReActStep] = Field(default_factory=list)
@@ -71,15 +76,24 @@ class DiplomatAgent(BaseAgent):
         bundle = repository.retrieve(session_id=session_id, query=user_query)
         prompt = self._context_text(bundle, prune_result["window_turns"])
         feedback_block = f"Judge feedback to address on retry: {judge_feedback}" if judge_feedback else ""
+        has_context = bool(bundle.chunks or bundle.triplets or bundle.summary)
+
+        if has_context:
+            system_prompt = (
+                "You are the Diplomat Agent. Use a concise ReAct style internally, ground every claim in retrieved memory, "
+                "and do not invent facts not present in context. Set grounded=true. Return only JSON matching the schema."
+            )
+        else:
+            LOGGER.info("Fallback LLM answer used (no prior context) for session=%s", session_id)
+            system_prompt = (
+                "You are the Diplomat Agent. No prior repository context was retrieved. Answer the user directly using your "
+                "general model knowledge, mark grounded=false, lower confidence accordingly, and clearly avoid pretending the "
+                "answer came from memory. Return only JSON matching the schema."
+            )
+
         response = self.chat_json(
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the Diplomat Agent. Use a concise ReAct style internally, ground every claim in retrieved memory, "
-                        "and do not invent facts not present in context. Return only JSON matching the schema."
-                    ),
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Session: {session_id}\nUser query: {user_query}\n\n{feedback_block}\n\n{prompt}"},
             ],
             schema=DiplomatDraft.model_json_schema(),
@@ -95,4 +109,5 @@ class DiplomatAgent(BaseAgent):
                 "triplets": bundle.triplets,
             },
             "draft": parsed.model_dump(),
+            "has_context": has_context,
         }

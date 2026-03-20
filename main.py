@@ -242,21 +242,20 @@ class Conductor:
                 )
                 final_answer = diplomat_packet["draft"]["answer"]
                 if judge_packet["approved"]:
-                    self.repository.remember_turn(session_id, "assistant", final_answer)
-                    memory_result = self.repository.store_interaction_memory(
-                        session_id=session_id,
-                        query=query,
-                        answer=final_answer,
-                        run_id=run_id,
+                    conversation_memory = self.repository.ingest(
+                        source="conversation",
+                        content=f"User: {query}\nAssistant: {final_answer}",
                     )
+                    self.repository.remember_turn(session_id, "assistant", final_answer)
                     self.log_event(
                         run_id=run_id,
                         agent_name="repository",
                         stage="memory_writeback",
                         status="completed",
-                        detail="Stored approved query and answer in semantic memory.",
-                        payload=memory_result,
+                        detail="Stored approved query and answer as conversation memory.",
+                        payload=conversation_memory,
                     )
+                    LOGGER.info("Memory stored for session %s", session_id)
                     self.db.update_workflow_run(
                         run_id,
                         status="completed",
@@ -272,7 +271,7 @@ class Conductor:
                         stage="finalize",
                         status="completed",
                         detail="Query approved, response stored, and memory write-back completed.",
-                        payload={"answer_preview": final_answer[:500], "memory": memory_result},
+                        payload={"answer_preview": final_answer[:500], "memory": conversation_memory},
                     )
                     LOGGER.info("Completed run_id=%s with approved answer and memory write-back", run_id)
                     return audited
